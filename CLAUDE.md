@@ -33,6 +33,8 @@
   | RST | 4 |
   | BLK（背光） | 32 |
 
+  - 第二個來源：Arduino 論壇 [Ideaspark st7789 ?](https://forum.arduino.cc/t/ideaspark-st7789/1310101) 有使用者貼出「廠商提供」的同一組接腳，與上表一致。仍是社群轉述，不是官方手冊，所以保持「待驗證」。
+
 - 已知注意事項：
   - 背光可能需要 `pinMode(32, INPUT_PULLUP); digitalWrite(32, HIGH);` 才會亮。
   - TFT_eSPI 的寬高設 170×320，不是 240。ST7789 列偏移為 35（0x23）。
@@ -41,4 +43,19 @@
 
 ## 開發環境
 
-- 尚未決定（Arduino IDE 或 PlatformIO）。決定後在此補上，包含開發板設定、函式庫與版本。
+- 使用 **PlatformIO**（VS Code 外掛 `platformio.platformio-ide` v3.3.4，PlatformIO Core 6.2.0）。不用 Arduino IDE。
+- 設定集中在 `platformio.ini`：
+  - platform：`espressif32@7.1.3`，board：`esp32dev`，framework：Arduino
+  - 函式庫：`bodmer/TFT_eSPI@^2.5.43`（實際解析為 2.5.43）
+  - TFT_eSPI 的驅動、尺寸、接腳全部寫在 `build_flags`，**不要改函式庫內的 `User_Setup.h`**。
+  - TFT_eSPI 在寬 170、高 320 時會自動啟用 `CGRAM_OFFSET`，列偏移 35 由函式庫處理，不必另外設定。
+  - 背光（GPIO32）不交給 TFT_eSPI（不定義 `TFT_BL`），由 `src/main.cpp` 自行控制。
+  - 目前沿用 `esp32dev` 預設的 4MB 分區表；板子實測確認 16MB 後，再考慮改用 16MB 分區表。
+- 編譯：`C:\Users\<使用者>\.platformio\penv\Scripts\pio.exe run`（`pio` 不在 PATH，需用完整路徑，或從 VS Code 的 PlatformIO 面板執行）。
+- 燒錄：`pio run -t upload`；序列埠監看：`pio device monitor`（115200）。
+- CH340 驅動：本機已安裝（`ch341ser.inf`，wch.cn，2014-08-08 版）。
+- `src/main.cpp` 目前是最小測試程式（背光、紅綠藍白填色與文字），用來在實機上核對接腳、顏色與偏移。
+- 已知風險（來自社群資料，待實機驗證）：
+  - 有人回報 ST7789 170×320 需要色彩反相；TFT_eSPI 初始化已送出 `INVON`，顏色不對時再調整。
+  - Arduino 論壇有使用者從 Adafruit ST7789 改用 TFT_eSPI 時出現畫面被切掉的情況，實機若遇到先檢查尺寸與偏移設定。
+  - Tasmota 討論串提到板背面有一顆微動開關接在 GPIO4，而 RST 也是 GPIO4，需實機確認是否為同一條線。
