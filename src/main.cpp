@@ -1,4 +1,4 @@
-// V0.3.0 Wi-Fi 配網、連線狀態與即時圖表
+// V0.4.0 Wi-Fi 配網、連線狀態、即時圖表與 OTA 無線更新
 //
 // 流程：
 //   開機 → 有儲存的帳密就連線；沒有或連線逾時就開配網熱點
@@ -6,11 +6,13 @@
 //   連上後有三頁：連線狀態（SSID、IP…）、網路圖表（RSSI、ping）、系統圖表（記憶體、晶片溫度）
 //   頁面每 10 秒自動輪播；短按 BOOT 鍵切到下一頁並停止輪播
 //   長按 BOOT 鍵 3 秒：清除已儲存的 Wi-Fi 並重新開機進入配網
+//   已連線時可用 PlatformIO 的 ota 環境無線更新韌體（需要 OTA 密碼，見 README）
 #include <Arduino.h>
 #include <WiFi.h>
 
 #include "config.h"
 #include "monitor.h"
+#include "ota_update.h"
 #include "ui.h"
 #include "wifi_portal.h"
 #include "wifi_store.h"
@@ -76,6 +78,7 @@ void onConnected() {
   page = 0;
   pageSince = millis();
   autoRotate = true;
+  OtaUpdate::begin();
   enterState(State::Connected);
 }
 
@@ -89,6 +92,7 @@ WifiInfo currentInfo() {
     info.rssi = WiFi.RSSI();
   }
   info.uptimeSec = millis() / 1000;
+  info.otaEnabled = OtaUpdate::enabled();
   return info;
 }
 
@@ -198,6 +202,7 @@ void renderPage() {
 }
 
 void loopConnected(uint32_t now) {
+  OtaUpdate::handle();  // 收到更新時會卡在這裡直到結束（成功後自動重新開機）
   bool sampled = Monitor::tick(now);
 
   bool pageChanged = false;

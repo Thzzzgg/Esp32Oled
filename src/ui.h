@@ -30,7 +30,11 @@ struct WifiInfo {
   String gateway;
   int rssi = 0;
   uint32_t uptimeSec = 0;
+  bool otaEnabled = false;
 };
+
+// OTA 更新的階段
+enum class OtaPhase : uint8_t { Start, Progress, Done, Failed };
 
 // 配網畫面右下角的提示
 enum class PortalNote : uint8_t { None, Connecting, Failed, Connected };
@@ -61,6 +65,9 @@ void showPortal(const PortalView &view);
 
 // 連線狀態頁：SSID、IP、訊號強度、閘道、運行時間；page / pageCount 用來畫左側的頁面指示點
 void showWifiStatus(const WifiInfo &info, int page, int pageCount);
+
+// OTA 更新畫面：進度條與百分比；Failed 時 detail 為錯誤原因
+void showOta(OtaPhase phase, unsigned int percent, const String &detail = "");
 
 // 圖表頁：上下兩張即時折線圖；有新資料時呼叫即可重畫
 void showChartPage(int page, int pageCount, const ChartSpec &specA, const History &histA, const ChartSpec &specB, const History &histB);

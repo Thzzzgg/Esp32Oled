@@ -1,3 +1,6 @@
 # PlatformIO 編譯產物與編輯器產生的設定
 .pio/
 .vscode/
+
+# OTA 密碼，不進 git（見 scripts/ota_password.py）
+ota_password.txt

@@ -34,6 +34,7 @@ ideaspark ESP32 開發板（16MB）內建 1.9 吋 ST7789 彩色 TFT LCD（170×3
   - 系統頁：剩餘記憶體、晶片內部溫度（未校準，只看趨勢）。
 - 頁面每 10 秒自動輪播，螢幕左邊的圓點表示目前頁；短按 BOOT 鍵切到下一頁並停止輪播。
 - 長按 BOOT 鍵 3 秒：清除已儲存的 Wi-Fi，重新開機進入配網。
+- **OTA 無線更新**：連上 Wi-Fi 後可以不接 USB 直接更新韌體，更新時螢幕顯示進度條。需要設定密碼，見下方「OTA 無線更新」。
 - 只支援 2.4GHz Wi-Fi（ESP32 不支援 5GHz）。
 - 螢幕內建字型只含英文與數字，中文 SSID 會顯示成亂碼。
 
@@ -49,6 +50,23 @@ pio run -e hwtest -t upload   # 燒錄硬體測試程式（只填色，不含 Wi
 ```
 
 `pio` 若不在 PATH，可使用 `C:\Users\<使用者>\.platformio\penv\Scripts\pio.exe`。
+
+## OTA 無線更新
+
+沒有設定密碼時，OTA 不會啟用（狀態頁底部顯示 `OTA off`），避免區網內任何人都能刷韌體。
+
+1. **設定密碼**（密碼不進 git，擇一）：
+   - 在專案根目錄建立 `ota_password.txt`，第一行寫密碼（已列入 `.gitignore`）；
+   - 或設定環境變數 `ESP32_OTA_PASSWORD`（Windows：`setx ESP32_OTA_PASSWORD "你的密碼"`，之後要重開 VS Code 或終端機）。
+   - 建議只用英文與數字，避免特殊字元在命令列被吃掉。
+2. **第一次用 USB 燒錄**：`pio run -t upload`。此時韌體已含 OTA，連上 Wi-Fi 後狀態頁會顯示 `OTA ready`。
+3. **之後改用無線更新**：`pio run -e ota -t upload`。主機名稱是 `esp32-lcd.local`；若電腦解析不到，改用 IP：`pio run -e ota -t upload --upload-port 192.168.x.x`（IP 看螢幕狀態頁）。
+
+注意：
+
+- 電腦與板子要在同一個區網。上傳時板子會連回電腦的隨機埠，Windows 防火牆若跳出提示請允許 Python。
+- 目前使用預設分區表，單一韌體上限約 1.25MB（現在約 0.85MB）。快超過時要改用 16MB 分區表，這要等實機確認 Flash 容量後再做。
+- 更新失敗（密碼錯、網路中斷）時螢幕會顯示原因，板子繼續跑舊韌體。
 
 ## 板子到手後的驗證步驟
 

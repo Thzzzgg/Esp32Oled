@@ -25,7 +25,7 @@ constexpr uint16_t COLOR_GRID = 0x2104;  // 更暗的灰：圖表格線
 constexpr uint8_t FONT_SMALL = 2;
 constexpr uint8_t FONT_LARGE = 4;
 
-enum class Screen { None, Splash, Connecting, Portal, Status, Chart };
+enum class Screen { None, Splash, Connecting, Portal, Status, Chart, Ota };
 Screen currentScreen = Screen::None;
 int currentSub = 0;  // 同一種畫面下的子頁編號（圖表頁有多張）
 
@@ -119,11 +119,21 @@ constexpr int BAR_H = 14;
 int lastDotPhase = -1;
 int lastBarWidth = -1;
 
+// ---- OTA 更新畫面 ----
+
+constexpr int OTA_BAR_X = 20;
+constexpr int OTA_BAR_Y = 96;
+constexpr int OTA_BAR_H = 14;
+int lastOtaPercent = -1;
+
 // ---- 狀態頁 ----
 
 constexpr int LABEL_X = 10;
 constexpr int VALUE_X = 100;
 constexpr int VALUE_W = 220 - 4;
+constexpr int UPTIME_W = 140;  // 運行時間最寬約 83px；右邊留給 OTA 標籤
+constexpr int OTA_TAG_X = 244;
+constexpr int OTA_TAG_W = 320 - OTA_TAG_X - 2;
 constexpr int BARS_X = 262;
 constexpr int ROW_SSID_Y = 36;
 constexpr int ROW_IP_Y = 64;
@@ -132,7 +142,7 @@ constexpr int ROW_GW_Y = 124;
 constexpr int ROW_UP_Y = 146;
 
 struct StatusCache {
-  String title, ssid, ip, rssi, gateway, uptime;
+  String title, ssid, ip, rssi, gateway, uptime, ota;
   int level = -1;
 };
 StatusCache status;
@@ -537,7 +547,45 @@ void showWifiStatus(const WifiInfo &info, int page, int pageCount) {
   }
 
   drawValue(status.gateway, VALUE_X, ROW_GW_Y, FONT_SMALL, info.connected ? info.gateway : none, COLOR_TEXT, VALUE_W);
-  drawValue(status.uptime, VALUE_X, ROW_UP_Y, FONT_SMALL, formatUptime(info.uptimeSec), COLOR_TEXT, VALUE_W);
+  drawValue(status.uptime, VALUE_X, ROW_UP_Y, FONT_SMALL, formatUptime(info.uptimeSec), COLOR_TEXT, UPTIME_W);
+  drawValue(status.ota, OTA_TAG_X, ROW_UP_Y, FONT_SMALL, info.otaEnabled ? "OTA ready" : "OTA off", info.otaEnabled ? COLOR_OK : COLOR_LABEL, OTA_TAG_W);
+}
+
+void showOta(OtaPhase phase, unsigned int percent, const String &detail) {
+  if (phase == OtaPhase::Start) currentScreen = Screen::None;  // 重新開始時一律整頁重畫
+  if (enterScreen(Screen::Ota)) {
+    lastOtaPercent = -1;
+    drawCentered(14, FONT_LARGE, "UPDATING", COLOR_WARN);
+    drawCentered(56, FONT_SMALL, "Do not power off", COLOR_LABEL);
+    tft.drawRect(OTA_BAR_X - 1, OTA_BAR_Y - 1, tft.width() - 2 * OTA_BAR_X + 2, OTA_BAR_H + 2, COLOR_LABEL);
+  }
+
+  if (phase == OtaPhase::Failed) {
+    tft.fillRect(0, 0, tft.width(), tft.height(), COLOR_BG);
+    drawCentered(14, FONT_LARGE, "UPDATE FAILED", COLOR_BAD);
+    drawCentered(70, FONT_LARGE, detail, COLOR_TEXT);
+    drawCentered(120, FONT_SMALL, "Running the old firmware", COLOR_LABEL);
+    return;
+  }
+
+  if (phase == OtaPhase::Done) {
+    tft.fillRect(0, 0, tft.width(), 50, COLOR_BG);
+    drawCentered(14, FONT_LARGE, "UPDATE OK", COLOR_OK);
+    drawCentered(56, FONT_SMALL, "Restarting...", COLOR_LABEL);
+    percent = 100;
+  }
+
+  if (percent > 100) percent = 100;
+  if ((int)percent == lastOtaPercent) return;
+  lastOtaPercent = (int)percent;
+
+  int barMax = tft.width() - 2 * OTA_BAR_X;
+  tft.fillRect(OTA_BAR_X, OTA_BAR_Y, (int)(percent * barMax / 100), OTA_BAR_H, COLOR_OK);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(COLOR_TEXT, COLOR_BG);
+  tft.setTextPadding(90);
+  tft.drawString(String(percent) + "%", tft.width() / 2, 122, FONT_LARGE);
+  tft.setTextPadding(0);
 }
 
 void showChartPage(int page, int pageCount, const ChartSpec &specA, const History &histA, const ChartSpec &specB, const History &histB) {

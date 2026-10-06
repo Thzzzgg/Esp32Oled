@@ -54,7 +54,9 @@
 - 設定集中在 `platformio.ini`：
   - platform：`espressif32@7.1.3`，board：`esp32dev`，framework：Arduino
   - 函式庫：`bodmer/TFT_eSPI@^2.5.43`（實際解析為 2.5.43）、`ricmoo/QRCode@^0.0.1`（配網畫面的 QR code）；Wi-Fi、WebServer、DNSServer、Preferences 為 Arduino-ESP32 內建。
-  - 有兩個環境：`esp32dev` 是主程式（預設，`pio run` 只編譯它）；`hwtest` 只跑填色與文字，用來單獨核對接腳、顏色與偏移（`pio run -e hwtest -t upload`）。
+  - 有三個環境：`esp32dev` 是主程式（預設，`pio run` 只編譯它）；`ota` 是同一份韌體改用 Wi-Fi 上傳（`pio run -e ota -t upload`）；`hwtest` 只跑填色與文字，用來單獨核對接腳、顏色與偏移（`pio run -e hwtest -t upload`）。
+  - OTA 密碼由 `scripts/ota_password.py` 讀取：環境變數 `ESP32_OTA_PASSWORD`，其次是專案根目錄的 `ota_password.txt`（已在 `.gitignore`）。**密碼絕對不要寫進 `platformio.ini` 或任何受 git 管理的檔案。** 沒有密碼時韌體不啟用 OTA，`ota` 環境會直接報錯。
+  - OTA 目前用預設 4MB 分區表，單一韌體上限約 1.25MB（現在約 0.85MB）；實機確認 16MB 後再改 16MB 分區表。
   - TFT_eSPI 的驅動、尺寸、接腳全部寫在 `build_flags`，**不要改函式庫內的 `User_Setup.h`**。
   - TFT_eSPI 在寬 170、高 320 時會自動啟用 `CGRAM_OFFSET`，列偏移 35 由函式庫處理，不必另外設定。
   - 背光（GPIO32）不交給 TFT_eSPI（不定義 `TFT_BL`），由 `src/ui.cpp` 自行控制。
@@ -69,6 +71,7 @@
   - `wifi_store.cpp`：Wi-Fi 帳密存在 NVS。
   - `monitor.cpp`：每秒取樣 RSSI、ping 延遲、剩餘記憶體、晶片溫度，存進 `history.h` 的環狀緩衝區（280 筆）。
   - `ping_monitor.cpp`：用 ESP-IDF 的 `esp_ping` 非阻塞地持續 ping 閘道。
+  - `ota_update.cpp`：ArduinoOTA 無線更新；只有編譯時帶了 `OTA_PASSWORD` 才會啟用。
   - `config.h`：腳位與時間常數。
 - 新增圖表只要在 `main.cpp` 加一個 `ChartSpec` 並在 `Monitor` 加一條 `History`，不用改繪圖程式。
 - 晶片溫度用 `temperatureRead()`，ESP32 原版的內部溫度感測器沒有校準，數值只能看趨勢，不是準確溫度。
