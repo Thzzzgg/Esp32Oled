@@ -1,0 +1,5 @@
+# Wokwi 模擬設定（Wokwi for VS Code）。先編譯 wokwi 環境：pio run -e wokwi
+[wokwi]
+version = 1
+firmware = '.pio/build/wokwi/firmware.bin'
+elf = '.pio/build/wokwi/firmware.elf'

@@ -68,6 +68,25 @@ pio run -e hwtest -t upload   # 燒錄硬體測試程式（只填色，不含 Wi
 - 目前使用預設分區表，單一韌體上限約 1.25MB（現在約 0.85MB）。快超過時要改用 16MB 分區表，這要等實機確認 Flash 容量後再做。
 - 更新失敗（密碼錯、網路中斷）時螢幕會顯示原因，板子繼續跑舊韌體。
 
+## Wokwi 模擬
+
+在沒有實機時，可以用 [Wokwi](https://wokwi.com/) 模擬器先看版面與已連線後的流程。用的是 VS Code 外掛版（支援 PlatformIO），不是線上瀏覽器版。
+
+1. 在 VS Code 安裝外掛「Wokwi Simulator」。
+2. 按 `F1` →「Wokwi: Request a new License」，在瀏覽器登入免費帳號並確認。
+3. 編譯模擬用韌體：`pio run -e wokwi`（或在 VS Code 底部切換到 `wokwi` 環境再按編譯）。
+4. 按 `F1` →「Wokwi: Start Simulator」。
+
+`diagram.json` 是模擬電路（接腳與實機相同，另外多一顆接 GPIO0 的綠色按鈕當 BOOT 鍵），`wokwi.toml` 指向編譯出的韌體。
+
+模擬環境與實機的差異：
+
+- Wokwi 沒有 ST7789，改用它的 ILI9341（240×320）。版面仍以 320×170 為準，下方留黑。
+- 直接連虛擬網路 `Wokwi-GUEST`，跳過配網與 OTA（兩者在模擬中都測不了）。
+- 模擬器不支援 ICMP，所以 ping 圖會一直顯示封包遺失（紅線）。
+- RSSI 與晶片溫度不會有真實變化。
+- **驗證不了**：ST7789V3 初始化、顏色反相、偏移 35、背光、BOOT 鍵實際接腳。這些仍要等實機。
+
 ## 板子到手後的驗證步驟
 
 1. USB 接上電腦，確認裝置管理員出現 CH340 序列埠。

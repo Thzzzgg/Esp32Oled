@@ -5,7 +5,12 @@
 #include "config.h"
 #include "ui.h"
 
-#ifdef OTA_PASSWORD
+// 有提供密碼才啟用；Wokwi 模擬不支援 mDNS 與 OTA，一律停用
+#if defined(OTA_PASSWORD) && !defined(WOKWI_SIM)
+#define OTA_ACTIVE 1
+#endif
+
+#ifdef OTA_ACTIVE
 #include <ArduinoOTA.h>
 #endif
 
@@ -13,7 +18,7 @@ namespace {
 
 bool started = false;
 
-#ifdef OTA_PASSWORD
+#ifdef OTA_ACTIVE
 const char *errorName(ota_error_t error) {
   switch (error) {
     case OTA_AUTH_ERROR: return "Auth failed";
@@ -31,7 +36,7 @@ const char *errorName(ota_error_t error) {
 namespace OtaUpdate {
 
 bool enabled() {
-#ifdef OTA_PASSWORD
+#ifdef OTA_ACTIVE
   return true;
 #else
   return false;
@@ -42,7 +47,7 @@ void begin() {
   if (started) return;
   started = true;
 
-#ifdef OTA_PASSWORD
+#ifdef OTA_ACTIVE
   ArduinoOTA.setHostname(WIFI_HOSTNAME);
   ArduinoOTA.setPassword(OTA_PASSWORD);
 
@@ -66,13 +71,15 @@ void begin() {
 
   ArduinoOTA.begin();
   Serial.printf("OTA 已啟用：%s.local\n", WIFI_HOSTNAME);
+#elif defined(WOKWI_SIM)
+  Serial.println("Wokwi 模擬不支援 OTA，已停用");
 #else
   Serial.println("未提供 OTA 密碼，無線更新停用（見 README）");
 #endif
 }
 
 void handle() {
-#ifdef OTA_PASSWORD
+#ifdef OTA_ACTIVE
   if (started) ArduinoOTA.handle();
 #endif
 }

@@ -247,6 +247,15 @@ void setup() {
   WiFi.persistent(false);
   WiFi.setHostname(WIFI_HOSTNAME);
 
+#ifdef WOKWI_SIM
+  // Wokwi 模擬：沒有手機可以配網，直接連官方虛擬 Wi-Fi（開放網路、頻道 6，指定頻道連線較快）
+  savedSsid = "Wokwi-GUEST";
+  savedPass = "";
+  Serial.println("Wokwi 模擬：連線到 Wokwi-GUEST");
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(savedSsid.c_str(), savedPass.c_str(), 6);
+  enterState(State::Connecting);
+#else
   if (WifiStore::load(savedSsid, savedPass)) {
     Serial.printf("使用已儲存的 Wi-Fi：%s\n", savedSsid.c_str());
     startStation(savedSsid, savedPass);
@@ -255,6 +264,7 @@ void setup() {
     Serial.println("尚未設定 Wi-Fi，進入配網");
     enterPortal();
   }
+#endif
 }
 
 void loop() {

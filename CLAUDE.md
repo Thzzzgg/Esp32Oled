@@ -54,7 +54,10 @@
 - 設定集中在 `platformio.ini`：
   - platform：`espressif32@7.1.3`，board：`esp32dev`，framework：Arduino
   - 函式庫：`bodmer/TFT_eSPI@^2.5.43`（實際解析為 2.5.43）、`ricmoo/QRCode@^0.0.1`（配網畫面的 QR code）；Wi-Fi、WebServer、DNSServer、Preferences 為 Arduino-ESP32 內建。
-  - 有三個環境：`esp32dev` 是主程式（預設，`pio run` 只編譯它）；`ota` 是同一份韌體改用 Wi-Fi 上傳（`pio run -e ota -t upload`）；`hwtest` 只跑填色與文字，用來單獨核對接腳、顏色與偏移（`pio run -e hwtest -t upload`）。
+  - 有四個環境：`esp32dev` 是主程式（預設，`pio run` 只編譯它）；`ota` 是同一份韌體改用 Wi-Fi 上傳（`pio run -e ota -t upload`）；`hwtest` 只跑填色與文字，用來單獨核對接腳、顏色與偏移（`pio run -e hwtest -t upload`）；`wokwi` 是給 Wokwi 模擬器用的版本。
+  - TFT 的接腳、字型、SPI 速度放在 `[tft_common]` 共用；驅動晶片與解析度由各環境指定（實機是 `ST7789_DRIVER` 170×320，`wokwi` 是 `ILI9341_DRIVER` 240×320）。
+  - Wokwi 模擬（`wokwi.toml`、`diagram.json`）：用 VS Code 外掛版，不是線上瀏覽器版。`wokwi` 環境定義 `WOKWI_SIM`，會直接連 `Wokwi-GUEST`、跳過配網與 OTA。模擬器不支援 ICMP（ping 全部遺失），也驗證不了 ST7789V3 初始化、顏色、偏移與背光。`diagram.json` 的接腳名稱是依 Wokwi 範例推斷的，尚未在 Wokwi 實際驗證。
+  - UI 版面一律以 320×170 為準（`ui.cpp` 的 `UI_H`），不要用 `tft.height()` 排版，否則在 Wokwi 的 240×320 螢幕上會跑掉。
   - OTA 密碼由 `scripts/ota_password.py` 讀取：環境變數 `ESP32_OTA_PASSWORD`，其次是專案根目錄的 `ota_password.txt`（已在 `.gitignore`）。**密碼絕對不要寫進 `platformio.ini` 或任何受 git 管理的檔案。** 沒有密碼時韌體不啟用 OTA，`ota` 環境會直接報錯。
   - OTA 目前用預設 4MB 分區表，單一韌體上限約 1.25MB（現在約 0.85MB）；實機確認 16MB 後再改 16MB 分區表。
   - TFT_eSPI 的驅動、尺寸、接腳全部寫在 `build_flags`，**不要改函式庫內的 `User_Setup.h`**。

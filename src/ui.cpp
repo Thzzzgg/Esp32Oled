@@ -21,6 +21,10 @@ constexpr uint16_t COLOR_BAD = TFT_RED;
 constexpr uint16_t COLOR_DIM = 0x4208;   // 暗灰：非目前頁的指示點
 constexpr uint16_t COLOR_GRID = 0x2104;  // 更暗的灰：圖表格線
 
+// 版面一律以 320x170 為準。實機螢幕就是這個大小；Wokwi 模擬用的 ILI9341 是 320x240，
+// 多出來的下方區域保持黑色，畫面看起來就和實機一致
+constexpr int UI_H = 170;
+
 // 字型 2 高 16px、字型 4 高 26px（TFT_eSPI 內建，只含 ASCII，中文會顯示成亂碼）
 constexpr uint8_t FONT_SMALL = 2;
 constexpr uint8_t FONT_LARGE = 4;
@@ -190,7 +194,7 @@ String formatUptime(uint32_t sec) {
 void drawPageDots(int page, int pageCount) {
   if (pageCount < 2) return;
   const int spacing = 11;
-  const int centerY = tft.height() / 2;
+  const int centerY = UI_H / 2;
   for (int i = 0; i < pageCount; i++) {
     int y = centerY + (2 * i - (pageCount - 1)) * spacing / 2;
     if (i == page) {
@@ -469,12 +473,12 @@ void showPortal(const PortalView &view) {
   String qrText = view.clientJoined ? String("http://") + view.apIp : String("WIFI:T:WPA;S:") + view.apSsid + ";P:" + view.apPass + ";;";
   if (entered || qrText != portalQrText) {
     portalQrText = qrText;
-    tft.fillRect(0, 0, PORTAL_PANEL_X, tft.height(), COLOR_BG);
+    tft.fillRect(0, 0, PORTAL_PANEL_X, UI_H, COLOR_BG);
     drawQr(qrText, QR_X, QR_Y, QR_BOX);
   }
 
   // 右側文字區整塊清掉重畫
-  tft.fillRect(PORTAL_PANEL_X, 0, PORTAL_PANEL_W, tft.height(), COLOR_BG);
+  tft.fillRect(PORTAL_PANEL_X, 0, PORTAL_PANEL_W, UI_H, COLOR_BG);
   const int x = PORTAL_PANEL_X;
   const int w = PORTAL_PANEL_W;
 
@@ -561,7 +565,7 @@ void showOta(OtaPhase phase, unsigned int percent, const String &detail) {
   }
 
   if (phase == OtaPhase::Failed) {
-    tft.fillRect(0, 0, tft.width(), tft.height(), COLOR_BG);
+    tft.fillRect(0, 0, tft.width(), UI_H, COLOR_BG);
     drawCentered(14, FONT_LARGE, "UPDATE FAILED", COLOR_BAD);
     drawCentered(70, FONT_LARGE, detail, COLOR_TEXT);
     drawCentered(120, FONT_SMALL, "Running the old firmware", COLOR_LABEL);
