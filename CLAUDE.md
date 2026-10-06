@@ -56,7 +56,10 @@
   - 函式庫：`bodmer/TFT_eSPI@^2.5.43`（實際解析為 2.5.43）、`ricmoo/QRCode@^0.0.1`（配網畫面的 QR code）；Wi-Fi、WebServer、DNSServer、Preferences 為 Arduino-ESP32 內建。
   - 有四個環境：`esp32dev` 是主程式（預設，`pio run` 只編譯它）；`ota` 是同一份韌體改用 Wi-Fi 上傳（`pio run -e ota -t upload`）；`hwtest` 只跑填色與文字，用來單獨核對接腳、顏色與偏移（`pio run -e hwtest -t upload`）；`wokwi` 是給 Wokwi 模擬器用的版本。
   - TFT 的接腳、字型、SPI 速度放在 `[tft_common]` 共用；驅動晶片與解析度由各環境指定（實機是 `ST7789_DRIVER` 170×320，`wokwi` 是 `ILI9341_DRIVER` 240×320）。
-  - Wokwi 模擬（`wokwi.toml`、`diagram.json`）：用 VS Code 外掛版，不是線上瀏覽器版。`wokwi` 環境定義 `WOKWI_SIM`，會直接連 `Wokwi-GUEST`、跳過配網與 OTA。模擬器不支援 ICMP（ping 全部遺失），也驗證不了 ST7789V3 初始化、顏色、偏移與背光。`diagram.json` 的接腳名稱是依 Wokwi 範例推斷的，尚未在 Wokwi 實際驗證。
+  - Wokwi 模擬（`wokwi.toml`、`diagram.json`）：用 VS Code 外掛版，不是線上瀏覽器版。`wokwi` 環境定義 `WOKWI_SIM`，會直接連 `Wokwi-GUEST`、跳過配網與 OTA。模擬器驗證不了 ST7789V3 初始化、顏色、偏移與背光。
+  - Wokwi 實測（2026-10-06）：`diagram.json` 的接腳名稱可用，螢幕與按鈕都正常；開機連線、三頁輪播、警報畫面與 BOOT 靜音都正常。ping 有回應（約 1 ms、遺失 0%），舊版寫的「模擬器不支援 ICMP、ping 全部遺失」與實測不符，所以警報會是「警告」而不是「異常」：模擬器的 RSSI 在 -67～-99 dBm 間亂跳，常低於 -80。晶片溫度是假值（約 -18°C）。
+  - `diagram.json` 的 `lcd1` 加了 `"rotate": 90`，只是讓模擬畫面以橫向顯示（Wokwi 的 ILI9341 零件是直立的），不影響韌體與實體接線；螢幕方向由 `ui.cpp` 的 `setRotation` 決定。
+  - 警報動畫期間模擬速度會掉到約 25%，滑鼠快點一下按鈕太短，韌體讀不到；BOOT 按鈕要按住約 1 秒（不要超過 3 秒，否則會觸發長按清除 Wi-Fi）。
   - UI 版面一律以 320×170 為準（`ui.cpp` 的 `UI_H`），不要用 `tft.height()` 排版，否則在 Wokwi 的 240×320 螢幕上會跑掉。
   - OTA 密碼由 `scripts/ota_password.py` 讀取：環境變數 `ESP32_OTA_PASSWORD`，其次是專案根目錄的 `ota_password.txt`（已在 `.gitignore`）。**密碼絕對不要寫進 `platformio.ini` 或任何受 git 管理的檔案。** 沒有密碼時韌體不啟用 OTA，`ota` 環境會直接報錯。
   - OTA 目前用預設 4MB 分區表，單一韌體上限約 1.25MB（現在約 0.85MB）；實機確認 16MB 後再改 16MB 分區表。
