@@ -4,3 +4,7 @@
 
 # OTA 密碼，不進 git（見 scripts/ota_password.py）
 ota_password.txt
+
+# Python 快取
+__pycache__/
+*.pyc
