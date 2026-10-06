@@ -21,6 +21,7 @@
 ## 硬體（尚未購買，以下資料待實機驗證）
 
 - 預計使用：ideaspark ESP32 開發板 16MB，內建 1.9 吋 **ST7789 TFT LCD**，解析度 170×320。
+- 目標商品：Amazon.co.jp [B0GZTFV72M](https://www.amazon.co.jp/dp/B0GZTFV72M)（「ESP32 開発ボード 16MB 1.9インチ ST7789 170x320 TFT LCDディスプレイ搭載 WiFi+BLE CH340 USB Type-C」，品牌 ideaspark）。
 - 注意：這是**彩色 TFT LCD，不是 OLED**。資料夾名稱 `Esp32Oled` 是沿用舊稱，不要改用 SSD1306 / SH1106 / U8g2 的寫法。
 - 主控：ESP32-WROOM-32，USB Type-C，CH340 USB 轉串口。
 - 顯示介面：SPI。社群資料的接腳如下（來源為 Amazon.com 同系列產品 B0D6QXC813 的使用者資料，**不是官方手冊**）：
@@ -35,6 +36,11 @@
   | BLK（背光） | 32 |
 
   - 第二個來源：Arduino 論壇 [Ideaspark st7789 ?](https://forum.arduino.cc/t/ideaspark-st7789/1310101) 有使用者貼出「廠商提供」的同一組接腳，與上表一致。仍是社群轉述，不是官方手冊，所以保持「待驗證」。
+  - 第三個來源：上述目標商品 B0GZTFV72M 的賣家商品頁（2026-10-06 讀取），特色與商品說明都列出同一組接腳（MOSI 23、SCLK 18、CS 15、DC 2、RST 4、BLK 32），與上表一致。這是賣家的商品頁，仍不是官方資料手冊，所以保持「待驗證」。
+  - 商品頁的其他規格：ESP32 雙核 240MHz、Flash 16MB、SRAM 520KB、Wi-Fi 802.11 b/g/n、BLE 4.2、3.3V；螢幕為 1.9 吋 IPS，顯示區 22.695×42.72 mm，背光為 3 顆白光 LED 並聯，30 針 FPC。
+  - 商品頁寫螢幕驅動 IC 為 **ST7789V3**（專案目前用 TFT_eSPI 的 `ST7789_DRIVER`）。V3 的初始化參數可能與一般 ST7789 略有差異，實機若顏色、亮度或畫面不對，先往這個方向查。
+  - 商品頁第一條特色寫螢幕支援「I2C」，與同頁的 SPI 接腳表矛盾，視為賣家筆誤，仍以 SPI 為準。
+  - 商品頁沒有提到 GPIO4 微動開關、色彩反相、列偏移 35，這幾項仍需實機確認。
 
 - 已知注意事項：
   - 背光可能需要 `pinMode(32, INPUT_PULLUP); digitalWrite(32, HIGH);` 才會亮。
