@@ -53,15 +53,24 @@
 - 使用 **PlatformIO**（VS Code 外掛 `platformio.platformio-ide` v3.3.4，PlatformIO Core 6.2.0）。不用 Arduino IDE。
 - 設定集中在 `platformio.ini`：
   - platform：`espressif32@7.1.3`，board：`esp32dev`，framework：Arduino
-  - 函式庫：`bodmer/TFT_eSPI@^2.5.43`（實際解析為 2.5.43）
+  - 函式庫：`bodmer/TFT_eSPI@^2.5.43`（實際解析為 2.5.43）、`ricmoo/QRCode@^0.0.1`（配網畫面的 QR code）；Wi-Fi、WebServer、DNSServer、Preferences 為 Arduino-ESP32 內建。
+  - 有兩個環境：`esp32dev` 是主程式（預設，`pio run` 只編譯它）；`hwtest` 只跑填色與文字，用來單獨核對接腳、顏色與偏移（`pio run -e hwtest -t upload`）。
   - TFT_eSPI 的驅動、尺寸、接腳全部寫在 `build_flags`，**不要改函式庫內的 `User_Setup.h`**。
   - TFT_eSPI 在寬 170、高 320 時會自動啟用 `CGRAM_OFFSET`，列偏移 35 由函式庫處理，不必另外設定。
-  - 背光（GPIO32）不交給 TFT_eSPI（不定義 `TFT_BL`），由 `src/main.cpp` 自行控制。
+  - 背光（GPIO32）不交給 TFT_eSPI（不定義 `TFT_BL`），由 `src/ui.cpp` 自行控制。
   - 目前沿用 `esp32dev` 預設的 4MB 分區表；板子實測確認 16MB 後，再考慮改用 16MB 分區表。
 - 編譯：`C:\Users\<使用者>\.platformio\penv\Scripts\pio.exe run`（`pio` 不在 PATH，需用完整路徑，或從 VS Code 的 PlatformIO 面板執行）。
 - 燒錄：`pio run -t upload`；序列埠監看：`pio device monitor`（115200）。
 - CH340 驅動：本機已安裝（`ch341ser.inf`，wch.cn，2014-08-08 版）。
-- `src/main.cpp` 目前是最小測試程式（背光、紅綠藍白填色與文字），用來在實機上核對接腳、顏色與偏移。
+- 程式結構（`src/`）：
+  - `main.cpp`：狀態機（連線中 → 配網 → 已連線）。
+  - `ui.cpp`：所有 TFT 繪圖（QR code、狀態頁、訊號強度條）；其他檔案不直接碰 `TFT_eSPI`。
+  - `wifi_portal.cpp`：配網熱點、DNS 導向與設定網頁。
+  - `wifi_store.cpp`：Wi-Fi 帳密存在 NVS。
+  - `config.h`：腳位與時間常數。
+- `hwtest/hwtest_main.cpp` 是最小測試程式（背光、紅綠藍白填色與文字），實機第一次燒錄先跑它，確認接腳、顏色與偏移，再跑主程式。
+- 內建字型只含 ASCII，畫面文字用英文；中文 SSID 在螢幕上會顯示成亂碼（手機網頁不受影響）。
+- 長按 BOOT（GPIO0）3 秒會清除已儲存的 Wi-Fi 並重新開機進入配網。本板是否有 BOOT 鍵、接在 GPIO0，待實機確認。
 - 已知風險（來自社群資料，待實機驗證）：
   - 有人回報 ST7789 170×320 需要色彩反相；TFT_eSPI 初始化已送出 `INVON`，顏色不對時再調整。
   - Arduino 論壇有使用者從 Adafruit ST7789 改用 TFT_eSPI 時出現畫面被切掉的情況，實機若遇到先檢查尺寸與偏移設定。
