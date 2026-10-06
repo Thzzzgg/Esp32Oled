@@ -63,11 +63,16 @@
 - 燒錄：`pio run -t upload`；序列埠監看：`pio device monitor`（115200）。
 - CH340 驅動：本機已安裝（`ch341ser.inf`，wch.cn，2014-08-08 版）。
 - 程式結構（`src/`）：
-  - `main.cpp`：狀態機（連線中 → 配網 → 已連線）。
-  - `ui.cpp`：所有 TFT 繪圖（QR code、狀態頁、訊號強度條）；其他檔案不直接碰 `TFT_eSPI`。
+  - `main.cpp`：狀態機（連線中 → 配網 → 已連線）；已連線後有三頁（狀態、網路圖表、系統圖表），自動輪播，短按 BOOT 切頁。
+  - `ui.cpp`：所有 TFT 繪圖（QR code、狀態頁、即時圖表）；其他檔案不直接碰 `TFT_eSPI`。圖表先畫在記憶體畫布（sprite，約 31KB）再推到螢幕。
   - `wifi_portal.cpp`：配網熱點、DNS 導向與設定網頁。
   - `wifi_store.cpp`：Wi-Fi 帳密存在 NVS。
+  - `monitor.cpp`：每秒取樣 RSSI、ping 延遲、剩餘記憶體、晶片溫度，存進 `history.h` 的環狀緩衝區（280 筆）。
+  - `ping_monitor.cpp`：用 ESP-IDF 的 `esp_ping` 非阻塞地持續 ping 閘道。
   - `config.h`：腳位與時間常數。
+- 新增圖表只要在 `main.cpp` 加一個 `ChartSpec` 並在 `Monitor` 加一條 `History`，不用改繪圖程式。
+- 晶片溫度用 `temperatureRead()`，ESP32 原版的內部溫度感測器沒有校準，數值只能看趨勢，不是準確溫度。
+- ping 目標是閘道；若路由器不回應 ICMP，ping 圖會全部顯示封包遺失。
 - `hwtest/hwtest_main.cpp` 是最小測試程式（背光、紅綠藍白填色與文字），實機第一次燒錄先跑它，確認接腳、顏色與偏移，再跑主程式。
 - 內建字型只含 ASCII，畫面文字用英文；中文 SSID 在螢幕上會顯示成亂碼（手機網頁不受影響）。
 - 長按 BOOT（GPIO0）3 秒會清除已儲存的 Wi-Fi 並重新開機進入配網。本板是否有 BOOT 鍵、接在 GPIO0，待實機確認。

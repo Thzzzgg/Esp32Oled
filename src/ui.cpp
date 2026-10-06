@@ -1,6 +1,7 @@
 #include "ui.h"
 
 #include <TFT_eSPI.h>
+#include <math.h>
 #include <qrcode.h>
 
 #include "config.h"
@@ -8,6 +9,8 @@
 namespace {
 
 TFT_eSPI tft;
+TFT_eSprite chartSprite(&tft);  // 圖表先畫在記憶體，再一次推到螢幕，避免重畫時閃爍
+bool chartSpriteReady = false;
 
 constexpr uint16_t COLOR_BG = TFT_BLACK;
 constexpr uint16_t COLOR_TEXT = TFT_WHITE;
@@ -15,18 +18,22 @@ constexpr uint16_t COLOR_LABEL = TFT_DARKGREY;
 constexpr uint16_t COLOR_OK = TFT_GREEN;
 constexpr uint16_t COLOR_WARN = TFT_YELLOW;
 constexpr uint16_t COLOR_BAD = TFT_RED;
+constexpr uint16_t COLOR_DIM = 0x4208;   // 暗灰：非目前頁的指示點
+constexpr uint16_t COLOR_GRID = 0x2104;  // 更暗的灰：圖表格線
 
 // 字型 2 高 16px、字型 4 高 26px（TFT_eSPI 內建，只含 ASCII，中文會顯示成亂碼）
 constexpr uint8_t FONT_SMALL = 2;
 constexpr uint8_t FONT_LARGE = 4;
 
-enum class Screen { None, Splash, Connecting, Portal, Status };
+enum class Screen { None, Splash, Connecting, Portal, Status, Chart };
 Screen currentScreen = Screen::None;
+int currentSub = 0;  // 同一種畫面下的子頁編號（圖表頁有多張）
 
 // 切換畫面時清空整個螢幕；回傳 true 表示這次是剛切換進來，需要畫靜態內容
-bool enterScreen(Screen next) {
-  if (currentScreen == next) return false;
+bool enterScreen(Screen next, int sub = 0) {
+  if (currentScreen == next && currentSub == sub) return false;
   currentScreen = next;
+  currentSub = sub;
   tft.fillScreen(COLOR_BG);
   return true;
 }
@@ -167,6 +174,225 @@ String formatUptime(uint32_t sec) {
   return buf;
 }
 
+// ---- 頁面指示點 ----
+
+// 在螢幕左邊緣垂直排列，目前頁是白色大點，其餘是暗灰小點
+void drawPageDots(int page, int pageCount) {
+  if (pageCount < 2) return;
+  const int spacing = 11;
+  const int centerY = tft.height() / 2;
+  for (int i = 0; i < pageCount; i++) {
+    int y = centerY + (2 * i - (pageCount - 1)) * spacing / 2;
+    if (i == page) {
+      tft.fillCircle(3, y, 3, TFT_WHITE);
+    } else {
+      tft.fillCircle(3, y, 2, COLOR_DIM);
+    }
+  }
+}
+
+// ---- 圖表頁 ----
+
+constexpr int CHART_X = 8;
+constexpr int CHART_W = HISTORY_LEN;  // 一個取樣一個像素
+constexpr int CHART_H = 56;
+constexpr int HEADER_H = 26;          // 每張圖上方的標題列（字型 4 的高度）
+constexpr int PANEL_H = 85;           // 兩張圖各佔 85px，剛好填滿 170
+constexpr int AXIS_X = CHART_X + CHART_W + 4;
+constexpr int VALUE_RIGHT_X = 318;
+constexpr int VALUE_PAD_W = 110;      // 「-100 dBm」（字型 4）約 109px
+constexpr int CAPTION_X = 90;
+constexpr int CAPTION_PAD_W = VALUE_RIGHT_X - VALUE_PAD_W - CAPTION_X - 2;  // 說明文字不可蓋到數值區
+
+uint16_t accentColor(Accent accent) {
+  switch (accent) {
+    case Accent::Cyan: return TFT_CYAN;
+    case Accent::Green: return TFT_GREEN;
+    case Accent::Orange: return TFT_ORANGE;
+    case Accent::Magenta: return TFT_MAGENTA;
+  }
+  return TFT_WHITE;
+}
+
+uint16_t valueColor(const ChartSpec &spec, float v) {
+  if (isnan(spec.warn) || isnan(spec.bad)) return accentColor(spec.accent);
+  bool bad = spec.higherIsWorse ? v >= spec.bad : v <= spec.bad;
+  bool warn = spec.higherIsWorse ? v >= spec.warn : v <= spec.warn;
+  return bad ? COLOR_BAD : (warn ? COLOR_WARN : COLOR_OK);
+}
+
+// 數值轉字串。Arduino 的 String(float, 小數位數) 在這個核心有多載歧義，改用 snprintf
+String formatNumber(float v, uint8_t decimals) {
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%.*f", (int)decimals, (double)v);
+  return String(buf);
+}
+
+// 自動縮放時，把上限往上取整成好讀的刻度
+float niceCeil(float v) {
+  static const float steps[] = {10, 20, 50, 100, 200, 500, 1000, 2000, 5000};
+  for (float s : steps) {
+    if (v <= s) return s;
+  }
+  return v;
+}
+
+// 統計目前畫面上的資料：有效筆數、遺失筆數、最小與最大值
+struct SeriesStats {
+  int valid = 0;
+  int lost = 0;
+  float mn = INFINITY;
+  float mx = -INFINITY;
+};
+
+SeriesStats computeStats(const ChartSpec &spec, const History &h) {
+  SeriesStats s;
+  for (size_t i = 0; i < h.size(); i++) {
+    float v = h.at(i);
+    if (isnan(v)) continue;
+    if (spec.negativeIsLoss && v < 0) {
+      s.lost++;
+      continue;
+    }
+    s.valid++;
+    if (v < s.mn) s.mn = v;
+    if (v > s.mx) s.mx = v;
+  }
+  return s;
+}
+
+void computeRange(const ChartSpec &spec, const SeriesStats &s, float &lo, float &hi) {
+  if (!spec.autoRange) {
+    lo = spec.lo;
+    hi = spec.hi;
+    return;
+  }
+  float mn = s.valid ? s.mn : 0;
+  float mx = s.valid ? s.mx : 0;
+  if (spec.zeroBased) {
+    lo = 0;
+    hi = niceCeil(mx > spec.minSpan ? mx : spec.minSpan);
+    return;
+  }
+  float span = mx - mn;
+  if (span < spec.minSpan) {
+    float mid = (mx + mn) / 2;
+    lo = mid - spec.minSpan / 2;
+    hi = mid + spec.minSpan / 2;
+  } else {
+    lo = mn - span * 0.1f;
+    hi = mx + span * 0.1f;
+  }
+}
+
+// 畫折線；G 可以是螢幕（TFT_eSPI）或記憶體畫布（TFT_eSprite），兩者的繪圖函式同名
+template <class G>
+void drawChartBody(G &g, int ox, int oy, const ChartSpec &spec, const History &h, float lo, float hi) {
+  g.fillRect(ox, oy, CHART_W, CHART_H, COLOR_BG);
+
+  // 上、中、下三條虛線格線
+  for (int i = 0; i < 3; i++) {
+    int y = oy + (CHART_H - 1) * i / 2;
+    for (int x = ox; x < ox + CHART_W; x += 4) g.drawPixel(x, y, COLOR_GRID);
+  }
+
+  const uint16_t color = accentColor(spec.accent);
+  const float range = (hi > lo) ? (hi - lo) : 1.0f;
+  const int plotH = CHART_H - 2;  // 折線粗 2px，下緣多留 1px
+  const int n = (int)h.size();
+  const int x0 = ox + CHART_W - n;  // 靠右對齊，最新的資料在最右邊
+
+  int px = 0, py = 0;
+  bool havePrev = false;
+  for (int i = 0; i < n; i++) {
+    float v = h.at(i);
+    int x = x0 + i;
+    if (isnan(v)) {
+      havePrev = false;  // 沒資料的地方斷線
+      continue;
+    }
+    if (spec.negativeIsLoss && v < 0) {
+      g.drawFastVLine(x, oy, CHART_H, COLOR_BAD);
+      havePrev = false;
+      continue;
+    }
+    float t = (v - lo) / range;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    int y = oy + plotH - (int)(t * plotH);
+    if (havePrev) {
+      g.drawLine(px, py, x, y, color);
+      g.drawLine(px, py + 1, x, y + 1, color);
+    } else {
+      g.drawPixel(x, y, color);
+      g.drawPixel(x, y + 1, color);
+    }
+    px = x;
+    py = y;
+    havePrev = true;
+  }
+}
+
+// 一張圖：標題列（名稱、說明、目前數值）＋折線＋右側刻度
+void drawChartPanel(int panelY, const ChartSpec &spec, const History &h) {
+  const SeriesStats stats = computeStats(spec, h);
+  float lo, hi;
+  computeRange(spec, stats, lo, hi);
+
+  // 標題列左邊：名稱
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(COLOR_LABEL, COLOR_BG);
+  tft.setTextPadding(0);
+  tft.drawString(spec.label, CHART_X, panelY + 5, FONT_SMALL);
+
+  // 標題列中間：一般圖表顯示可見範圍的最小～最大值，ping 顯示遺失率
+  String caption = " ";
+  if (spec.negativeIsLoss) {
+    int total = stats.valid + stats.lost;
+    if (total > 0) caption = String("loss ") + (stats.lost * 100 / total) + "%";
+  } else if (stats.valid > 0) {
+    caption = formatNumber(stats.mn, spec.decimals) + " .. " + formatNumber(stats.mx, spec.decimals);
+  }
+  tft.setTextPadding(CAPTION_PAD_W);
+  tft.drawString(caption, CAPTION_X, panelY + 5, FONT_SMALL);
+
+  // 標題列右邊：目前數值，依門檻上色
+  const float latest = h.latest();
+  String valueText;
+  uint16_t valueCol;
+  if (isnan(latest)) {
+    valueText = "--";
+    valueCol = COLOR_LABEL;
+  } else if (spec.negativeIsLoss && latest < 0) {
+    valueText = "LOST";
+    valueCol = COLOR_BAD;
+  } else {
+    valueText = formatNumber(latest, spec.decimals) + " " + spec.unit;
+    valueCol = valueColor(spec, latest);
+  }
+  tft.setTextDatum(TR_DATUM);
+  tft.setTextColor(valueCol, COLOR_BG);
+  tft.setTextPadding(VALUE_PAD_W);
+  tft.drawString(valueText, VALUE_RIGHT_X, panelY, FONT_LARGE);
+
+  // 折線
+  const int chartY = panelY + HEADER_H + 1;
+  if (chartSpriteReady) {
+    drawChartBody(chartSprite, 0, 0, spec, h, lo, hi);
+    chartSprite.pushSprite(CHART_X, chartY);
+  } else {
+    drawChartBody(tft, CHART_X, chartY, spec, h, lo, hi);  // 記憶體不足時直接畫在螢幕上，會閃爍
+  }
+
+  // 右側刻度：上限與下限
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(COLOR_LABEL, COLOR_BG);
+  tft.setTextPadding(320 - AXIS_X);
+  tft.drawString(formatNumber(hi, spec.decimals), AXIS_X, chartY, 1);
+  tft.drawString(formatNumber(lo, spec.decimals), AXIS_X, chartY + CHART_H - 8, 1);
+  tft.setTextPadding(0);
+}
+
 }  // namespace
 
 namespace Ui {
@@ -179,6 +405,9 @@ void begin() {
   tft.init();
   tft.setRotation(1);  // 橫向，320x170
   tft.fillScreen(COLOR_BG);
+
+  // 圖表畫布 280x56，16 位元色約 31KB；配不到記憶體就退回直接畫在螢幕上
+  chartSpriteReady = chartSprite.createSprite(CHART_W, CHART_H) != nullptr;
 }
 
 void showSplash(const char *line1, const char *line2) {
@@ -277,9 +506,10 @@ void showPortal(const PortalView &view) {
   }
 }
 
-void showWifiStatus(const WifiInfo &info) {
+void showWifiStatus(const WifiInfo &info, int page, int pageCount) {
   if (enterScreen(Screen::Status)) {
     status = StatusCache();
+    drawPageDots(page, pageCount);
     tft.setTextDatum(TL_DATUM);
     tft.setTextColor(COLOR_LABEL, COLOR_BG);
     tft.setTextPadding(0);
@@ -308,6 +538,12 @@ void showWifiStatus(const WifiInfo &info) {
 
   drawValue(status.gateway, VALUE_X, ROW_GW_Y, FONT_SMALL, info.connected ? info.gateway : none, COLOR_TEXT, VALUE_W);
   drawValue(status.uptime, VALUE_X, ROW_UP_Y, FONT_SMALL, formatUptime(info.uptimeSec), COLOR_TEXT, VALUE_W);
+}
+
+void showChartPage(int page, int pageCount, const ChartSpec &specA, const History &histA, const ChartSpec &specB, const History &histB) {
+  if (enterScreen(Screen::Chart, page)) drawPageDots(page, pageCount);
+  drawChartPanel(0, specA, histA);
+  drawChartPanel(PANEL_H, specB, histB);
 }
 
 }  // namespace Ui

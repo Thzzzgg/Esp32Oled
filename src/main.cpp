@@ -1,14 +1,16 @@
-// V0.2.0 Wi-Fi 配網與連線狀態顯示
+// V0.3.0 Wi-Fi 配網、連線狀態與即時圖表
 //
 // 流程：
 //   開機 → 有儲存的帳密就連線；沒有或連線逾時就開配網熱點
 //   配網：手機掃螢幕上的 QR code 加入熱點，在網頁輸入要連的 Wi-Fi
-//   連上後顯示 SSID、IP、訊號強度、閘道與運行時間
+//   連上後有三頁：連線狀態（SSID、IP…）、網路圖表（RSSI、ping）、系統圖表（記憶體、晶片溫度）
+//   頁面每 10 秒自動輪播；短按 BOOT 鍵切到下一頁並停止輪播
 //   長按 BOOT 鍵 3 秒：清除已儲存的 Wi-Fi 並重新開機進入配網
 #include <Arduino.h>
 #include <WiFi.h>
 
 #include "config.h"
+#include "monitor.h"
 #include "ui.h"
 #include "wifi_portal.h"
 #include "wifi_store.h"
@@ -31,6 +33,20 @@ PortalView portalView;
 
 uint32_t lostSince = 0;   // 斷線開始的時間，0 表示目前沒斷線
 uint32_t lastRetry = 0;
+
+// 已連線後的頁面：0 狀態、1 網路圖表、2 系統圖表
+constexpr int PAGE_COUNT = 3;
+int page = 0;
+uint32_t pageSince = 0;     // 切到目前頁的時間，自動輪播用
+bool autoRotate = true;     // 按過按鍵後改成 false
+bool shortPressed = false;  // 由 checkButton() 設定、loopConnected() 取用
+
+// 圖表規格欄位順序：標題、單位、主色、自動縮放、固定下限、固定上限、最小跨度、下限為 0、
+//                  黃色門檻、紅色門檻、越大越糟、負值為封包遺失、小數位數
+const ChartSpec SPEC_RSSI = {"RSSI", "dBm", Accent::Cyan, false, -100, -30, 0, false, -65, -80, false, false, 0};
+const ChartSpec SPEC_PING = {"PING", "ms", Accent::Green, true, 0, 0, 10, true, 50, 150, true, true, 0};
+const ChartSpec SPEC_HEAP = {"HEAP", "KB", Accent::Orange, true, 0, 0, 10, false, NAN, NAN, false, false, 0};
+const ChartSpec SPEC_TEMP = {"TEMP", "C", Accent::Magenta, true, 0, 0, 4, false, NAN, NAN, false, false, 1};
 
 void enterState(State next) {
   state = next;
@@ -57,6 +73,9 @@ void enterPortal() {
 void onConnected() {
   Serial.printf("已連線：%s IP：%s RSSI：%d dBm\n", savedSsid.c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
   lostSince = 0;
+  page = 0;
+  pageSince = millis();
+  autoRotate = true;
   enterState(State::Connected);
 }
 
@@ -73,22 +92,29 @@ WifiInfo currentInfo() {
   return info;
 }
 
-// 長按 BOOT 清除 Wi-Fi 設定。GPIO0 是 strapping 腳，只在開機後才當按鍵用（開機時按住會進入燒錄模式）
+// 按鍵：短按（放開時按下的時間介於去彈跳與長按門檻之間）切換頁面；長按清除 Wi-Fi 設定。
+// GPIO0 是 strapping 腳，只在開機後才當按鍵用（開機時按住會進入燒錄模式）
 void checkButton() {
   static uint32_t pressedAt = 0;
-  if (digitalRead(PIN_BTN) != LOW) {
-    pressedAt = 0;
+  uint32_t now = millis();
+
+  if (digitalRead(PIN_BTN) == LOW) {
+    if (pressedAt == 0) {
+      pressedAt = now ? now : 1;
+    } else if (now - pressedAt >= BTN_LONG_PRESS_MS) {
+      Serial.println("長按 BOOT：清除 Wi-Fi 設定並重新開機");
+      WifiStore::clear();
+      Ui::showSplash("Wi-Fi settings cleared", "Restarting...");
+      delay(1500);
+      ESP.restart();
+    }
     return;
   }
-  uint32_t now = millis();
-  if (pressedAt == 0) {
-    pressedAt = now;
-  } else if (now - pressedAt >= BTN_LONG_PRESS_MS) {
-    Serial.println("長按 BOOT：清除 Wi-Fi 設定並重新開機");
-    WifiStore::clear();
-    Ui::showSplash("Wi-Fi settings cleared", "Restarting...");
-    delay(1500);
-    ESP.restart();
+
+  if (pressedAt != 0) {
+    uint32_t held = now - pressedAt;
+    if (held >= BTN_DEBOUNCE_MS && held < BTN_LONG_PRESS_MS) shortPressed = true;
+    pressedAt = 0;
   }
 }
 
@@ -163,10 +189,33 @@ void loopPortalDone(uint32_t now) {
   }
 }
 
+void renderPage() {
+  switch (page) {
+    case 0: Ui::showWifiStatus(currentInfo(), page, PAGE_COUNT); break;
+    case 1: Ui::showChartPage(page, PAGE_COUNT, SPEC_RSSI, Monitor::rssi(), SPEC_PING, Monitor::ping()); break;
+    default: Ui::showChartPage(page, PAGE_COUNT, SPEC_HEAP, Monitor::heapKb(), SPEC_TEMP, Monitor::chipTemp()); break;
+  }
+}
+
 void loopConnected(uint32_t now) {
-  if (now - lastUiMs >= UI_REFRESH_MS) {
+  bool sampled = Monitor::tick(now);
+
+  bool pageChanged = false;
+  if (shortPressed) {
+    autoRotate = false;  // 手動切換後停止自動輪播
+    page = (page + 1) % PAGE_COUNT;
+    pageChanged = true;
+  } else if (autoRotate && now - pageSince >= AUTO_ROTATE_MS) {
+    page = (page + 1) % PAGE_COUNT;
+    pageChanged = true;
+  }
+  if (pageChanged) pageSince = now;
+
+  // 狀態頁要每 UI_REFRESH_MS 更新（運行時間、訊號）；圖表頁只在有新取樣時重畫
+  bool redraw = pageChanged || (page == 0 ? now - lastUiMs >= UI_REFRESH_MS : sampled);
+  if (redraw) {
     lastUiMs = now;
-    Ui::showWifiStatus(currentInfo());
+    renderPage();
   }
 
   // 斷線時 Arduino 核心會自動重連；超過一段時間仍沒連上，再主動要求重連
@@ -214,6 +263,7 @@ void loop() {
     case State::PortalDone: loopPortalDone(now); break;
     case State::Connected: loopConnected(now); break;
   }
+  shortPressed = false;  // 只有已連線狀態會用到短按，其他狀態把它丟掉，避免之後誤觸發
 
   delay(2);  // 讓出 CPU 給 Wi-Fi 背景工作
 }
