@@ -4,6 +4,7 @@
 #include <math.h>
 #include <qrcode.h>
 
+#include "alert_glyphs.h"
 #include "config.h"
 
 namespace {
@@ -23,13 +24,14 @@ constexpr uint16_t COLOR_GRID = 0x2104;  // 更暗的灰：圖表格線
 
 // 版面一律以 320x170 為準。實機螢幕就是這個大小；Wokwi 模擬用的 ILI9341 是 320x240，
 // 多出來的下方區域保持黑色，畫面看起來就和實機一致
+constexpr int UI_W = 320;
 constexpr int UI_H = 170;
 
 // 字型 2 高 16px、字型 4 高 26px（TFT_eSPI 內建，只含 ASCII，中文會顯示成亂碼）
 constexpr uint8_t FONT_SMALL = 2;
 constexpr uint8_t FONT_LARGE = 4;
 
-enum class Screen { None, Splash, Connecting, Portal, Status, Chart, Ota };
+enum class Screen { None, Splash, Connecting, Portal, Status, Chart, Ota, Alert };
 Screen currentScreen = Screen::None;
 int currentSub = 0;  // 同一種畫面下的子頁編號（圖表頁有多張）
 
@@ -407,6 +409,158 @@ void drawChartPanel(int panelY, const ChartSpec &spec, const History &h) {
   tft.setTextPadding(0);
 }
 
+// ---- 警報畫面（EVA 風格）----
+//
+// 黑底，紅橘六邊形蜂巢像水波一樣明暗起伏；中央一塊黑底面板，上方是代碼與優先度，
+// 中間是長体漢字，下面是加寬字距的英文與一行說明，邊框閃爍，偶爾故障抖動。
+// 整張 320x170 先畫在 8 位元畫布（約 54KB）再推到螢幕；畫布只在警報期間存在，結束就釋放。
+
+constexpr uint16_t EVA_RED = 0xF800;
+constexpr uint16_t EVA_ORANGE = 0xFC60;
+constexpr uint16_t EVA_YELLOW = 0xFFE0;
+constexpr uint16_t EVA_DARKRED = 0x8000;
+constexpr uint16_t EVA_DIM = 0x3000;
+
+constexpr int ALERT_PX = 50;   // 中央面板位置與大小
+constexpr int ALERT_PY = 12;
+constexpr int ALERT_PW = 220;
+constexpr int ALERT_PH = 146;
+
+// 平頂六邊形：外接圓半徑 14、半高 12，欄距 21、列距 24，奇數欄往下錯半格剛好密鋪
+constexpr int HEX_R = 14;
+constexpr int HEX_HALF_H = 12;
+constexpr int HEX_COL_W = 21;
+constexpr int HEX_ROW_H = 24;
+const int8_t HEX_VX[6] = {14, 7, -7, -14, -7, 7};
+const int8_t HEX_VY[6] = {0, 12, 12, 0, -12, -12};
+
+TFT_eSprite alertSprite(&tft);
+bool alertSpriteReady = false;
+
+struct AlertStyle {
+  uint8_t pair;          // 漢字組：0 警告、1 緊急、2 異常、3 危険（順序同 tools/gen_alert_glyphs.py）
+  const char *word;      // 英文
+  const char *code;      // 代碼
+  const char *priority;  // 優先度
+  uint16_t main;         // 主色
+  uint16_t hot;          // 亮色
+};
+
+AlertStyle alertStyle(AlertKind kind) {
+  switch (kind) {
+    case AlertKind::NetworkLost: return {1, "EMERGENCY", "601", "AAA", EVA_RED, EVA_ORANGE};
+    case AlertKind::MemoryLow: return {3, "DANGER", "335", "AA", EVA_RED, EVA_ORANGE};
+    case AlertKind::PingLoss: return {2, "ANOMALY", "473", "A", EVA_ORANGE, EVA_YELLOW};
+    default: return {0, "WARNING", "107", "B", EVA_ORANGE, EVA_YELLOW};
+  }
+}
+
+// 蜂巢背景：每個六邊形依位置與時間算一個亮度，形成斜向掃過的波紋
+template <class G>
+void drawHexField(G &g, const AlertStyle &st, uint32_t now) {
+  const float t = now * 0.0065f;  // 波紋週期約 1 秒
+  const int cols = UI_W / HEX_COL_W + 2;
+  for (int c = -1; c < cols; c++) {
+    const int cx = c * HEX_COL_W;
+    const int rowShift = (c & 1) ? HEX_HALF_H : 0;
+    for (int cy = rowShift - HEX_ROW_H; cy < UI_H + HEX_ROW_H; cy += HEX_ROW_H) {
+      // 完全被中央面板蓋住的不用畫
+      if (cx - HEX_R >= ALERT_PX && cx + HEX_R <= ALERT_PX + ALERT_PW && cy - HEX_HALF_H >= ALERT_PY &&
+          cy + HEX_HALF_H <= ALERT_PY + ALERT_PH) {
+        continue;
+      }
+      float b = (sinf(t - cx * 0.035f - cy * 0.05f) + 1.0f) * 0.5f;
+      uint16_t color = b > 0.82f ? st.hot : (b > 0.5f ? st.main : (b > 0.25f ? EVA_DARKRED : EVA_DIM));
+      for (int k = 0; k < 6; k++) {
+        int n = (k + 1) % 6;
+        g.drawLine(cx + HEX_VX[k], cy + HEX_VY[k], cx + HEX_VX[n], cy + HEX_VY[n], color);
+      }
+    }
+  }
+}
+
+// 畫一個畫格。G 可以是記憶體畫布或螢幕本身（畫布配不到記憶體時的退路，會閃爍）
+template <class G>
+void drawAlertFrame(G &g, const AlertView &view, uint32_t now) {
+  const AlertStyle st = alertStyle(view.kind);
+  const bool flash = (now / 250) & 1;  // 邊框每 0.25 秒換一次顏色
+
+  g.fillRect(0, 0, UI_W, UI_H, TFT_BLACK);
+  drawHexField(g, st, now);
+
+  // 中央面板與閃爍邊框，四角各伸出一小段
+  const uint16_t border = flash ? st.hot : st.main;
+  g.fillRect(ALERT_PX, ALERT_PY, ALERT_PW, ALERT_PH, TFT_BLACK);
+  g.drawRect(ALERT_PX, ALERT_PY, ALERT_PW, ALERT_PH, border);
+  g.drawRect(ALERT_PX + 1, ALERT_PY + 1, ALERT_PW - 2, ALERT_PH - 2, border);
+  g.drawFastHLine(ALERT_PX - 8, ALERT_PY, 8, st.hot);
+  g.drawFastVLine(ALERT_PX, ALERT_PY - 8, 8, st.hot);
+  g.drawFastHLine(ALERT_PX + ALERT_PW, ALERT_PY, 8, st.hot);
+  g.drawFastVLine(ALERT_PX + ALERT_PW - 1, ALERT_PY - 8, 8, st.hot);
+  g.drawFastHLine(ALERT_PX - 8, ALERT_PY + ALERT_PH - 1, 8, st.hot);
+  g.drawFastVLine(ALERT_PX, ALERT_PY + ALERT_PH, 8, st.hot);
+  g.drawFastHLine(ALERT_PX + ALERT_PW, ALERT_PY + ALERT_PH - 1, 8, st.hot);
+  g.drawFastVLine(ALERT_PX + ALERT_PW - 1, ALERT_PY + ALERT_PH, 8, st.hot);
+
+  // 面板內由上往下掃的暗線，墊在文字後面
+  const int scanY = ALERT_PY + 2 + (now / 7) % (ALERT_PH - 4);
+  g.drawFastHLine(ALERT_PX + 2, scanY, ALERT_PW - 4, EVA_DIM);
+  g.drawFastHLine(ALERT_PX + 2, scanY + 1, ALERT_PW - 4, EVA_DIM);
+
+  // 偶爾故障：每隔一陣子有一格畫面左右抖動，漢字再疊一個暗紅殘影
+  const uint32_t slot = now / 90;
+  const bool glitch = (slot % 17) == 0 || (slot % 29) == 3;
+  const int shake = glitch ? (int)((slot * 7) % 9) - 4 : 0;
+
+  // 頂端一行：代碼與優先度
+  g.setTextColor(st.main);
+  g.setTextDatum(TL_DATUM);
+  g.drawString(String("CODE:") + st.code, ALERT_PX + 8, ALERT_PY + 6, FONT_SMALL);
+  g.setTextDatum(TR_DATUM);
+  g.drawString(String("PRIORITY:") + st.priority, ALERT_PX + ALERT_PW - 8, ALERT_PY + 6, FONT_SMALL);
+
+  // 中央大漢字，上下各一條分隔線；每 1.2 秒熄滅 0.1 秒，像接觸不良的燈
+  const int kanjiY = ALERT_PY + 28;
+  const int pairX = (UI_W - (2 * GLYPH_W + 10)) / 2 + shake;
+  g.drawFastHLine(ALERT_PX + 8, kanjiY - 4, ALERT_PW - 16, st.main);
+  g.drawFastHLine(ALERT_PX + 8, kanjiY + GLYPH_H + 3, ALERT_PW - 16, st.main);
+  if (((now / 100) % 12) != 0) {
+    const uint8_t *left = ALERT_GLYPHS[st.pair * 2];
+    const uint8_t *right = ALERT_GLYPHS[st.pair * 2 + 1];
+    if (glitch) {
+      g.drawBitmap(pairX + 4, kanjiY + 2, left, GLYPH_W, GLYPH_H, EVA_DARKRED);
+      g.drawBitmap(pairX + GLYPH_W + 14, kanjiY + 2, right, GLYPH_W, GLYPH_H, EVA_DARKRED);
+    }
+    g.drawBitmap(pairX, kanjiY, left, GLYPH_W, GLYPH_H, st.main);
+    g.drawBitmap(pairX + GLYPH_W + 10, kanjiY, right, GLYPH_W, GLYPH_H, st.main);
+  }
+
+  // 英文：字與字之間加寬，置中
+  const String word = st.word;
+  const int spacing = 5;
+  int total = -spacing;
+  for (size_t i = 0; i < word.length(); i++) total += g.textWidth(String(word[i]), FONT_LARGE) + spacing;
+  int x = (UI_W - total) / 2 + shake;
+  g.setTextColor(st.main);
+  g.setTextDatum(TL_DATUM);
+  for (size_t i = 0; i < word.length(); i++) {
+    String ch = String(word[i]);
+    g.drawString(ch, x, kanjiY + GLYPH_H + 9, FONT_LARGE);
+    x += g.textWidth(ch, FONT_LARGE) + spacing;
+  }
+
+  // 一行說明（目前的數值）
+  g.setTextColor(st.hot);
+  g.setTextDatum(TC_DATUM);
+  g.drawString(view.detail, UI_W / 2, ALERT_PY + ALERT_PH - 22, FONT_SMALL);
+
+  // 面板下方的小提示：怎麼靜音
+  g.fillRect(100, UI_H - 10, 120, 10, TFT_BLACK);
+  g.setTextColor(EVA_DARKRED);
+  g.setTextDatum(TC_DATUM);
+  g.drawString(String("BOOT = MUTE ") + (ALERT_MUTE_MS / 1000) + "S", UI_W / 2, UI_H - 9, 1);
+}
+
 }  // namespace
 
 namespace Ui {
@@ -590,6 +744,32 @@ void showOta(OtaPhase phase, unsigned int percent, const String &detail) {
   tft.setTextPadding(90);
   tft.drawString(String(percent) + "%", tft.width() / 2, 122, FONT_LARGE);
   tft.setTextPadding(0);
+}
+
+void showAlert(const AlertView &view, uint32_t now) {
+  if (currentScreen != Screen::Alert) {
+    currentScreen = Screen::Alert;
+    currentSub = 0;
+    tft.fillScreen(TFT_BLACK);
+    if (!alertSpriteReady) {
+      alertSprite.setColorDepth(8);  // 8 位元色（RRRGGGBB）：紅、橘、黃都夠用，記憶體只要 16 位元的一半
+      alertSpriteReady = alertSprite.createSprite(UI_W, UI_H) != nullptr;
+    }
+  }
+  if (alertSpriteReady) {
+    drawAlertFrame(alertSprite, view, now);
+    alertSprite.pushSprite(0, 0);
+  } else {
+    drawAlertFrame(tft, view, now);  // 配不到記憶體：直接畫在螢幕上，會閃爍但功能正常
+  }
+}
+
+void endAlert() {
+  if (alertSpriteReady) {
+    alertSprite.deleteSprite();
+    alertSpriteReady = false;
+  }
+  currentScreen = Screen::None;  // 讓下一個畫面一定整頁重畫
 }
 
 void showChartPage(int page, int pageCount, const ChartSpec &specA, const History &histA, const ChartSpec &specB, const History &histB) {

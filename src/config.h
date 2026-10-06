@@ -17,3 +17,14 @@ constexpr uint32_t BTN_DEBOUNCE_MS = 40;             // 按鍵去彈跳，低於
 constexpr uint32_t SAMPLE_INTERVAL_MS = 1000;        // 圖表資料的取樣間隔
 constexpr size_t HISTORY_LEN = 280;                  // 保留的取樣數，等於圖表寬度（像素），約 4 分 40 秒
 constexpr uint32_t AUTO_ROTATE_MS = 10000;           // 自動輪播頁面的間隔（按過按鍵後停止輪播）
+
+// ---- 門檻警報（EVA 風格警報畫面）----
+// 條件要連續成立 ALERT_RAISE_SAMPLES 次取樣（約秒）才觸發，連續不成立 ALERT_CLEAR_SAMPLES 次才解除，避免來回閃
+constexpr float ALERT_RSSI_DBM = -80;            // 訊號強度低於或等於此值：警告（WARNING）
+constexpr int ALERT_PING_LOSS_STREAK = 3;        // ping 連續遺失幾次：異常（ANOMALY）
+constexpr float ALERT_HEAP_KB = 40;              // 剩餘記憶體低於此值（KB）：危險（DANGER）
+                                                 // Wi-Fi 斷線：緊急（EMERGENCY）
+constexpr int ALERT_RAISE_SAMPLES = 3;
+constexpr int ALERT_CLEAR_SAMPLES = 5;
+constexpr uint32_t ALERT_MUTE_MS = 60000;        // 警報中短按 BOOT 靜音多久，時間到若仍未解除會再次出現
+constexpr uint32_t ALERT_FRAME_MS = 80;          // 警報動畫的畫格間隔（約 12 fps）

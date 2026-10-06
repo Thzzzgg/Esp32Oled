@@ -1,15 +1,18 @@
-// V0.4.0 Wi-Fi 配網、連線狀態、即時圖表與 OTA 無線更新
+// V0.5.0 Wi-Fi 配網、連線狀態、即時圖表、OTA 無線更新與 EVA 風格門檻警報
 //
 // 流程：
 //   開機 → 有儲存的帳密就連線；沒有或連線逾時就開配網熱點
 //   配網：手機掃螢幕上的 QR code 加入熱點，在網頁輸入要連的 Wi-Fi
 //   連上後有三頁：連線狀態（SSID、IP…）、網路圖表（RSSI、ping）、系統圖表（記憶體、晶片溫度）
 //   頁面每 10 秒自動輪播；短按 BOOT 鍵切到下一頁並停止輪播
+//   門檻警報：Wi-Fi 斷線、訊號太弱、ping 連續遺失、記憶體不足時，整個畫面切成 EVA 風格的警報動畫；
+//   警報中短按 BOOT 靜音一分鐘
 //   長按 BOOT 鍵 3 秒：清除已儲存的 Wi-Fi 並重新開機進入配網
 //   已連線時可用 PlatformIO 的 ota 環境無線更新韌體（需要 OTA 密碼，見 README）
 #include <Arduino.h>
 #include <WiFi.h>
 
+#include "alert.h"
 #include "config.h"
 #include "monitor.h"
 #include "ota_update.h"
@@ -42,6 +45,9 @@ int page = 0;
 uint32_t pageSince = 0;     // 切到目前頁的時間，自動輪播用
 bool autoRotate = true;     // 按過按鍵後改成 false
 bool shortPressed = false;  // 由 checkButton() 設定、loopConnected() 取用
+
+bool alertShown = false;        // 目前螢幕上是不是警報畫面
+uint32_t lastAlertFrameMs = 0;  // 上一個警報畫格的時間
 
 // 圖表規格欄位順序：標題、單位、主色、自動縮放、固定下限、固定上限、最小跨度、下限為 0、
 //                  黃色門檻、紅色門檻、越大越糟、負值為封包遺失、小數位數
@@ -201,11 +207,51 @@ void renderPage() {
   }
 }
 
+// 斷線時 Arduino 核心會自動重連；超過一段時間仍沒連上，再主動要求重連
+void keepWifiAlive(uint32_t now) {
+  if (WiFi.status() == WL_CONNECTED) {
+    lostSince = 0;
+    return;
+  }
+  if (lostSince == 0) lostSince = now;
+  if (now - lostSince >= WIFI_RETRY_AFTER_MS && now - lastRetry >= WIFI_RETRY_AFTER_MS) {
+    lastRetry = now;
+    Serial.println("Wi-Fi 斷線，嘗試重連");
+    WiFi.reconnect();
+  }
+}
+
 void loopConnected(uint32_t now) {
   OtaUpdate::handle();  // 收到更新時會卡在這裡直到結束（成功後自動重新開機）
   bool sampled = Monitor::tick(now);
+  if (sampled) Alert::update(WiFi.status() == WL_CONNECTED);
 
-  bool pageChanged = false;
+  // 警報中短按 BOOT：靜音一段時間，不切頁
+  bool alertOn = Alert::active(now);
+  if (alertOn && shortPressed) {
+    Alert::mute(now, ALERT_MUTE_MS);
+    shortPressed = false;
+    alertOn = false;
+  }
+
+  if (alertOn) {
+    alertShown = true;
+    if (now - lastAlertFrameMs >= ALERT_FRAME_MS) {
+      lastAlertFrameMs = now;
+      Ui::showAlert(Alert::view(), now);
+    }
+    keepWifiAlive(now);
+    return;
+  }
+
+  // 剛離開警報畫面（解除或靜音）：釋放動畫記憶體，整頁重畫
+  bool leftAlert = alertShown;
+  if (leftAlert) {
+    alertShown = false;
+    Ui::endAlert();
+  }
+
+  bool pageChanged = leftAlert;
   if (shortPressed) {
     autoRotate = false;  // 手動切換後停止自動輪播
     page = (page + 1) % PAGE_COUNT;
@@ -223,17 +269,7 @@ void loopConnected(uint32_t now) {
     renderPage();
   }
 
-  // 斷線時 Arduino 核心會自動重連；超過一段時間仍沒連上，再主動要求重連
-  if (WiFi.status() == WL_CONNECTED) {
-    lostSince = 0;
-    return;
-  }
-  if (lostSince == 0) lostSince = now;
-  if (now - lostSince >= WIFI_RETRY_AFTER_MS && now - lastRetry >= WIFI_RETRY_AFTER_MS) {
-    lastRetry = now;
-    Serial.println("Wi-Fi 斷線，嘗試重連");
-    WiFi.reconnect();
-  }
+  keepWifiAlive(now);
 }
 
 void setup() {

@@ -75,8 +75,12 @@
   - `monitor.cpp`：每秒取樣 RSSI、ping 延遲、剩餘記憶體、晶片溫度，存進 `history.h` 的環狀緩衝區（280 筆）。
   - `ping_monitor.cpp`：用 ESP-IDF 的 `esp_ping` 非阻塞地持續 ping 閘道。
   - `ota_update.cpp`：ArduinoOTA 無線更新；只有編譯時帶了 `OTA_PASSWORD` 才會啟用。
+  - `alert.cpp`：門檻警報的判斷（去彈跳、優先順序、靜音），只看 `Monitor` 的取樣，不碰畫面。門檻與時間常數在 `config.h` 的 `ALERT_*`。
+  - `alert_glyphs.h`：警報畫面的漢字點陣字模，**由 `tools/gen_alert_glyphs.py` 產生，不要手改**（Noto Serif JP，SIL OFL）。順序是警告、緊急、異常、危険，與 `ui.cpp` 的 `alertStyle()` 對應。
   - `config.h`：腳位與時間常數。
 - 新增圖表只要在 `main.cpp` 加一個 `ChartSpec` 並在 `Monitor` 加一條 `History`，不用改繪圖程式。
+- 警報畫面（EVA 風格）整張 320×170 先畫在 8 位元畫布（約 54KB，只在警報期間存在，`endAlert()` 釋放），配不到記憶體時退回直接畫在螢幕上（會閃爍）。警報中短按 BOOT 是靜音，不是切頁。
+- 警報的背光閃爍沒有做：背光腳（GPIO32）需要 `INPUT_PULLUP` 的做法尚未在實機驗證，亂切換腳位模式有風險；等實機確認後再評估。蜂鳴器同理，板上沒有，要外接才有聲音。
 - 晶片溫度用 `temperatureRead()`，ESP32 原版的內部溫度感測器沒有校準，數值只能看趨勢，不是準確溫度。
 - ping 目標是閘道；若路由器不回應 ICMP，ping 圖會全部顯示封包遺失。
 - `hwtest/hwtest_main.cpp` 是最小測試程式（背光、紅綠藍白填色與文字），實機第一次燒錄先跑它，確認接腳、顏色與偏移，再跑主程式。

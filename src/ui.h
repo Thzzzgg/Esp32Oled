@@ -2,6 +2,7 @@
 #pragma once
 #include <Arduino.h>
 
+#include "alert.h"
 #include "history.h"
 
 // 圖表折線與數值的主色
@@ -65,6 +66,12 @@ void showPortal(const PortalView &view);
 
 // 連線狀態頁：SSID、IP、訊號強度、閘道、運行時間；page / pageCount 用來畫左側的頁面指示點
 void showWifiStatus(const WifiInfo &info, int page, int pageCount);
+
+// 警報畫面（EVA 風格）：整頁動畫，警報期間約每 ALERT_FRAME_MS 呼叫一次，now 為 millis()
+void showAlert(const AlertView &view, uint32_t now);
+
+// 離開警報畫面：釋放動畫用的記憶體，下一個畫面會整頁重畫
+void endAlert();
 
 // OTA 更新畫面：進度條與百分比；Failed 時 detail 為錯誤原因
 void showOta(OtaPhase phase, unsigned int percent, const String &detail = "");
